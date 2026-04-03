@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProtocolEvolution Dashboard</title>
+<style>
+:root {
+  --bg: #f8f9fa;
+  --card-bg: #ffffff;
+  --text: #1a1a2e;
+  --text-muted: #6c757d;
+  --border: #dee2e6;
+  --primary: #2563eb;
+  --primary-light: #dbeafe;
+  --danger: #dc2626;
+  --danger-light: #fee2e2;
+  --warning: #d97706;
+  --warning-light: #fef3c7;
+  --success: #16a34a;
+  --success-light: #dcfce7;
+  --info: #0891b2;
+  --info-light: #cffafe;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  padding: 1rem;
+}
+
+h1 {
+  font-size: 1.75rem;
+  margin-bottom: 0.25rem;
+  color: var(--primary);
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-bottom: 1.5rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+.card-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.card-title .icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.full-width { grid-column: 1 / -1; }
+
+/* Stat boxes */
+.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.stat-box {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.75rem;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+/* Table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.badge-danger { background: var(--danger-light); color: var(--danger); }
+.badge-warning { background: var(--warning-light); color: var(--warning); }
+.badge-success { background: var(--success-light); color: var(--success); }
+.badge-info { background: var(--info-light); color: var(--info); }
+
+/* Bar chart */
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.bar-label {
+  width: 140px;
+  font-size: 0.85rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.bar-track {
+  flex: 1;
+  height: 22px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s;
+  display: flex;
+  align-items: center;
+  padding-left: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+  min-width: 28px;
+}
+
+/* File input */
+.file-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  margin-bottom: 1rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.file-zone:hover { border-color: var(--primary); }
+.file-zone input { display: none; }
+
+.file-zone label {
+  cursor: pointer;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* Sponsor comparison */
+.sponsor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.sponsor-card {
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.sponsor-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.sponsor-stat {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* Focus styles for accessibility */
+button:focus-visible, a:focus-visible, label:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+button {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+button:hover { opacity: 0.9; }
+
+.demo-btn {
+  margin-left: 0.75rem;
+  background: var(--info);
+}
+</style>
+</head>
+<body>
+<h1>ProtocolEvolution</h1>
+<p class="subtitle">Protocol Amendment Pattern Detector for ClinicalTrials.gov</p>
+
+<div class="file-zone" id="fileZone">
+  <input type="file" id="fileInput" accept=".json" aria-label="Upload analysis JSON file">
+  <label for="fileInput" tabindex="0" role="button" aria-label="Click to upload JSON or drag and drop">
+    Upload analysis_output.json
+  </label>
+  <span> or drag &amp; drop here</span>
+  <button class="demo-btn" id="demoBtn" type="button">Load Demo Data</button>
+</div>
+
+<!-- Panel 1: Amendment Timeline -->
+<div class="grid">
+  <div class="card full-width" id="panelTimeline">
+    <div class="card-title">
+      <span class="icon" style="background:var(--primary)">1</span>
+      Amendment Timeline
+    </div>
+    <div id="timelineContent"><p style="color:var(--text-muted)">Load data to view trial amendment timelines.</p></div>
+  </div>
+</div>
+
+<!-- Panel 2: Prevalence -->
+<div class="grid">
+  <div class="card" id="panelPrevalence">
+    <div class="card-title">
+      <span class="icon" style="background:var(--info)">2</span>
+      Amendment Prevalence
+    </div>
+    <div id="prevalenceContent"><p style="color:var(--text-muted)">No data loaded.</p></div>
+  </div>
+
+  <!-- Panel 3: Pattern Alerts -->
+  <div class="card" id="panelPatterns">
+    <div class="card-title">
+      <span class="icon" style="background:var(--danger)">3</span>
+      Pattern Alerts
+    </div>
+    <div id="patternsContent"><p style="color:var(--text-muted)">No data loaded.</p></div>
+  </div>
+</div>
+
+<!-- Panel 4: Amendment-Outcome Link -->
+<div class="grid">
+  <div class="card" id="panelOutcome">
+    <div class="card-title">
+      <span class="icon" style="background:var(--warning)">4</span>
+      Amendment-Outcome Link
+    </div>
+    <div id="outcomeContent"><p style="color:var(--text-muted)">No data loaded.</p></div>
+  </div>
+
+  <!-- Panel 5: Sponsor Comparison -->
+  <div class="card" id="panelSponsor">
+    <div class="card-title">
+      <span class="icon" style="background:var(--success)">5</span>
+      Sponsor Comparison
+    </div>
+    <div id="sponsorContent"><p style="color:var(--text-muted)">No data loaded.</p></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  var STORAGE_KEY = 'pe_preferences';
+
+  function escapeHtml(str) {
+    if (typeof str !== 'string') str = String(str);
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+              .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function loadPreferences() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch(e) { return {}; }
+  }
+
+  function savePreferences(prefs) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs)); } catch(e) {}
+  }
+
+  // Demo data (embedded fixture output)
+  function getDemoData() {
+    return {
+      trials: [
+        {
+          nctId: 'NCT_AMEND_001',
+          signals: { nctId:'NCT_AMEND_001', enrollmentEstimated:200, enrollmentActual:198,
+            enrollmentDelta:-2, enrollmentDeltaPct:-1.0, endpointChanged:false,
+            completionExtensionDays:75, eligibilityChangeCount:0, status:'COMPLETED',
+            sponsor:'CleanPharma', condition:'Heart Failure', phase:'PHASE3',
+            updateGapDays:888, completionExtensions:0 },
+          diffs: [],
+          changes: [],
+          patterns: []
+        },
+        {
+          nctId: 'NCT_AMEND_002',
+          signals: { nctId:'NCT_AMEND_002', enrollmentEstimated:300, enrollmentActual:550,
+            enrollmentDelta:250, enrollmentDeltaPct:83.3, endpointChanged:true,
+            completionExtensionDays:1582, eligibilityChangeCount:0, status:'COMPLETED',
+            sponsor:'RescueCorp', condition:'Diabetes', phase:'PHASE3',
+            updateGapDays:2796, completionExtensions:2 },
+          diffs: [{field:'enrollment',significant:true},{field:'completionDate',significant:true},{field:'primaryEndpoint',significant:true}],
+          changes: [{category:'ENROLLMENT',type:'SAMPLE_SIZE_INCREASE'},{category:'TIMELINE',type:'COMPLETION_EXTENDED'},{category:'ENDPOINTS',type:'PRIMARY_ADDED'}],
+          patterns: [{pattern:'RESCUE',severity:'HIGH',evidence:['Enrollment increased: 300 -> 550','Primary endpoint changed','Completion extended by 1582 days']}]
+        },
+        {
+          nctId: 'NCT_AMEND_003',
+          signals: { nctId:'NCT_AMEND_003', enrollmentEstimated:150, enrollmentActual:180,
+            enrollmentDelta:30, enrollmentDeltaPct:20.0, endpointChanged:false,
+            completionExtensionDays:546, eligibilityChangeCount:4, status:'COMPLETED',
+            sponsor:'ScopeCo', condition:'Lung Cancer', phase:'PHASE2',
+            updateGapDays:1751, completionExtensions:1 },
+          diffs: [{field:'eligibility',significant:true}],
+          changes: [{category:'ELIGIBILITY',type:'AGE_RANGE_WIDENED'},{category:'ELIGIBILITY',type:'INCLUSION_LOOSENED'},{category:'ELIGIBILITY',type:'INCLUSION_LOOSENED'},{category:'ELIGIBILITY',type:'EXCLUSION_REMOVED'}],
+          patterns: [{pattern:'SCOPE_CREEP',severity:'MODERATE',evidence:['3 eligibility criteria loosened']}]
+        },
+        {
+          nctId: 'NCT_AMEND_004',
+          signals: { nctId:'NCT_AMEND_004', enrollmentEstimated:1000, enrollmentActual:650,
+            enrollmentDelta:-350, enrollmentDeltaPct:-35.0, endpointChanged:false,
+            completionExtensionDays:1127, eligibilityChangeCount:0, status:'TERMINATED',
+            sponsor:'GoalPost Inc', condition:'Heart Failure', phase:'PHASE3',
+            updateGapDays:2335, completionExtensions:3 },
+          diffs: [{field:'enrollment',significant:true},{field:'completionDate',significant:true}],
+          changes: [{category:'ENROLLMENT',type:'SAMPLE_SIZE_DECREASE'},{category:'TIMELINE',type:'COMPLETION_EXTENDED'}],
+          patterns: [{pattern:'GOALPOST_MOVE',severity:'MODERATE',evidence:['Completion extended 3 times','No enrollment increase to justify extensions']}]
+        }
+      ],
+      outcomes: {
+        amendedTrials: 3,
+        cleanTrials: 1,
+        amendedCompletionRate: 66.7,
+        cleanCompletionRate: 100.0,
+        completionRateDelta: -33.3,
+        patternFates: {
+          RESCUE: { COMPLETED: 1 },
+          SCOPE_CREEP: { COMPLETED: 1 },
+          GOALPOST_MOVE: { TERMINATED: 1 }
+        }
+      },
+      aggregation: {
+        totalTrials: 4,
+        prevalence: {
+          enrollmentChanged: 2, endpointChanged: 1,
+          completionExtended: 3, eligibilityChanged: 1, anyPattern: 3,
+          enrollmentChangedPct: 50.0, endpointChangedPct: 25.0,
+          completionExtendedPct: 75.0, eligibilityChangedPct: 25.0, anyPatternPct: 75.0
+        },
+        bySponsor: {
+          CleanPharma: { trials:1, amended:0, patterns:{} },
+          RescueCorp: { trials:1, amended:1, patterns:{RESCUE:1} },
+          ScopeCo: { trials:1, amended:1, patterns:{SCOPE_CREEP:1} },
+          'GoalPost Inc': { trials:1, amended:1, patterns:{GOALPOST_MOVE:1} }
+        },
+        byCondition: {
+          'Heart Failure': { trials:2, amended:1, patterns:{GOALPOST_MOVE:1} },
+          Diabetes: { trials:1, amended:1, patterns:{RESCUE:1} },
+          'Lung Cancer': { trials:1, amended:1, patterns:{SCOPE_CREEP:1} }
+        }
+      }
+    };
+  }
+
+  function renderAll(data) {
+    renderTimeline(data.trials);
+    renderPrevalence(data.aggregation);
+    renderPatterns(data.trials);
+    renderOutcome(data.outcomes);
+    renderSponsor(data.aggregation.bySponsor);
+    savePreferences({ lastLoaded: new Date().toISOString() });
+  }
+
+  function renderTimeline(trials) {
+    var el = document.getElementById('timelineContent');
+    var html = '<table><thead><tr><th>NCT ID</th><th>Enrollment Delta</th><th>Completion Ext.</th><th>Endpoint Changed</th><th>Elig. Changes</th><th>Status</th><th>Patterns</th></tr></thead><tbody>';
+    for (var i = 0; i < trials.length; i++) {
+      var t = trials[i];
+      var s = t.signals;
+      var patNames = t.patterns.map(function(p){ return p.pattern; });
+      var statusBadge = s.status === 'COMPLETED'
+        ? '<span class="badge badge-success">COMPLETED</span>'
+        : '<span class="badge badge-danger">' + escapeHtml(s.status) + '</span>';
+      var patBadges = patNames.length === 0
+        ? '<span class="badge badge-success">Clean</span>'
+        : patNames.map(function(n){
+            var cls = n === 'RESCUE' || n === 'STEALTH_SWITCH' ? 'badge-danger' : 'badge-warning';
+            return '<span class="badge ' + cls + '">' + escapeHtml(n) + '</span>';
+          }).join(' ');
+      html += '<tr>';
+      html += '<td>' + escapeHtml(t.nctId) + '</td>';
+      html += '<td>' + (s.enrollmentDeltaPct !== null && s.enrollmentDeltaPct !== undefined ? s.enrollmentDeltaPct + '%' : 'N/A') + '</td>';
+      html += '<td>' + (s.completionExtensionDays !== null && s.completionExtensionDays !== undefined ? s.completionExtensionDays + 'd' : 'N/A') + '</td>';
+      html += '<td>' + (s.endpointChanged ? '<span class="badge badge-danger">Yes</span>' : 'No') + '</td>';
+      html += '<td>' + s.eligibilityChangeCount + '</td>';
+      html += '<td>' + statusBadge + '</td>';
+      html += '<td>' + patBadges + '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  }
+
+  function renderPrevalence(agg) {
+    var el = document.getElementById('prevalenceContent');
+    var prev = agg.prevalence;
+    var bars = [
+      { label: 'Enrollment Changed', pct: prev.enrollmentChangedPct, color: 'var(--primary)' },
+      { label: 'Endpoint Changed', pct: prev.endpointChangedPct, color: 'var(--danger)' },
+      { label: 'Completion Extended', pct: prev.completionExtendedPct, color: 'var(--warning)' },
+      { label: 'Eligibility Changed', pct: prev.eligibilityChangedPct, color: 'var(--info)' },
+      { label: 'Any Pattern', pct: prev.anyPatternPct, color: 'var(--success)' }
+    ];
+    var html = '<div style="margin-bottom:0.75rem"><strong>' + agg.totalTrials + '</strong> trials analyzed</div>';
+    for (var i = 0; i < bars.length; i++) {
+      var b = bars[i];
+      html += '<div class="bar-row">';
+      html += '<div class="bar-label">' + escapeHtml(b.label) + '</div>';
+      html += '<div class="bar-track"><div class="bar-fill" style="width:' + Math.max(b.pct, 5) + '%;background:' + b.color + '">' + b.pct + '%</div></div>';
+      html += '</div>';
+    }
+    el.innerHTML = html;
+  }
+
+  function renderPatterns(trials) {
+    var el = document.getElementById('patternsContent');
+    var allPats = [];
+    for (var i = 0; i < trials.length; i++) {
+      for (var j = 0; j < trials[i].patterns.length; j++) {
+        var p = trials[i].patterns[j];
+        allPats.push({ nctId: trials[i].nctId, pattern: p.pattern, severity: p.severity, evidence: p.evidence });
+      }
+    }
+    if (allPats.length === 0) {
+      el.innerHTML = '<p class="badge badge-success">No concerning patterns detected.</p>';
+      return;
+    }
+    var html = '';
+    for (var k = 0; k < allPats.length; k++) {
+      var ap = allPats[k];
+      var sevCls = ap.severity === 'HIGH' ? 'badge-danger' : 'badge-warning';
+      html += '<div style="margin-bottom:0.75rem;padding:0.75rem;background:var(--bg);border-radius:6px">';
+      html += '<strong>' + escapeHtml(ap.nctId) + '</strong> ';
+      html += '<span class="badge ' + sevCls + '">' + escapeHtml(ap.pattern) + '</span> ';
+      html += '<span class="badge ' + sevCls + '">' + escapeHtml(ap.severity) + '</span>';
+      html += '<ul style="margin-top:0.35rem;margin-left:1.25rem;font-size:0.85rem;color:var(--text-muted)">';
+      for (var m = 0; m < ap.evidence.length; m++) {
+        html += '<li>' + escapeHtml(ap.evidence[m]) + '</li>';
+      }
+      html += '</ul></div>';
+    }
+    el.innerHTML = html;
+  }
+
+  function renderOutcome(outcomes) {
+    var el = document.getElementById('outcomeContent');
+    var html = '<div class="stat-row">';
+    html += '<div class="stat-box"><div class="stat-value">' + outcomes.amendedTrials + '</div><div class="stat-label">Amended Trials</div></div>';
+    html += '<div class="stat-box"><div class="stat-value">' + outcomes.cleanTrials + '</div><div class="stat-label">Clean Trials</div></div>';
+    html += '</div>';
+    html += '<div class="stat-row" style="margin-top:0.75rem">';
+    html += '<div class="stat-box"><div class="stat-value" style="color:var(--warning)">' + (outcomes.amendedCompletionRate !== null ? outcomes.amendedCompletionRate + '%' : 'N/A') + '</div><div class="stat-label">Amended Completion</div></div>';
+    html += '<div class="stat-box"><div class="stat-value" style="color:var(--success)">' + (outcomes.cleanCompletionRate !== null ? outcomes.cleanCompletionRate + '%' : 'N/A') + '</div><div class="stat-label">Clean Completion</div></div>';
+    html += '<div class="stat-box"><div class="stat-value" style="color:var(--danger)">' + (outcomes.completionRateDelta !== null ? outcomes.completionRateDelta + ' pp' : 'N/A') + '</div><div class="stat-label">Delta</div></div>';
+    html += '</div>';
+
+    // Pattern fates
+    var fates = outcomes.patternFates;
+    var fateKeys = Object.keys(fates);
+    if (fateKeys.length > 0) {
+      html += '<div style="margin-top:1rem"><strong>Pattern Fates:</strong></div>';
+      html += '<table style="margin-top:0.5rem"><thead><tr><th>Pattern</th><th>COMPLETED</th><th>TERMINATED</th><th>Other</th></tr></thead><tbody>';
+      for (var i = 0; i < fateKeys.length; i++) {
+        var pk = fateKeys[i];
+        var f = fates[pk];
+        html += '<tr><td><span class="badge badge-info">' + escapeHtml(pk) + '</span></td>';
+        html += '<td>' + (f.COMPLETED || 0) + '</td>';
+        html += '<td>' + (f.TERMINATED || 0) + '</td>';
+        var other = 0;
+        var statusKeys = Object.keys(f);
+        for (var j = 0; j < statusKeys.length; j++) {
+          if (statusKeys[j] !== 'COMPLETED' && statusKeys[j] !== 'TERMINATED') {
+            other += f[statusKeys[j]];
+          }
+        }
+        html += '<td>' + other + '</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    el.innerHTML = html;
+  }
+
+  function renderSponsor(bySponsor) {
+    var el = document.getElementById('sponsorContent');
+    var keys = Object.keys(bySponsor);
+    if (keys.length === 0) {
+      el.innerHTML = '<p style="color:var(--text-muted)">No sponsor data.</p>';
+      return;
+    }
+    var html = '<div class="sponsor-grid">';
+    for (var i = 0; i < keys.length; i++) {
+      var sp = keys[i];
+      var info = bySponsor[sp];
+      var patKeys = Object.keys(info.patterns);
+      var patStr = patKeys.length > 0 ? patKeys.join(', ') : 'None';
+      var borderColor = info.amended > 0 ? 'var(--warning)' : 'var(--success)';
+      html += '<div class="sponsor-card" style="border-left:3px solid ' + borderColor + '">';
+      html += '<div class="sponsor-name">' + escapeHtml(sp) + '</div>';
+      html += '<div class="sponsor-stat">Trials: ' + info.trials + '</div>';
+      html += '<div class="sponsor-stat">Amended: ' + info.amended + '</div>';
+      html += '<div class="sponsor-stat">Patterns: ' + escapeHtml(patStr) + '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  // File handling
+  var fileZone = document.getElementById('fileZone');
+  var fileInput = document.getElementById('fileInput');
+  var demoBtn = document.getElementById('demoBtn');
+
+  fileInput.addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        var data = JSON.parse(ev.target.result);
+        renderAll(data);
+      } catch(err) {
+        alert('Invalid JSON file: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  fileZone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    fileZone.style.borderColor = 'var(--primary)';
+  });
+
+  fileZone.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    fileZone.style.borderColor = '';
+  });
+
+  fileZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    fileZone.style.borderColor = '';
+    var file = e.dataTransfer.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        var data = JSON.parse(ev.target.result);
+        renderAll(data);
+      } catch(err) {
+        alert('Invalid JSON file: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  demoBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    renderAll(getDemoData());
+  });
+
+  // Keyboard support for demo button
+  demoBtn.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      demoBtn.click();
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
