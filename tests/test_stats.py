@@ -1,4 +1,4 @@
-"""15 tests for ProtocolEvolution stats engine."""
+"""25 tests for ProtocolEvolution stats engine."""
 
 import os
 import sys
@@ -17,6 +17,11 @@ from src.stats_engine import (
     cox_ph,
     amendment_markov_chain,
     propensity_match,
+    hidden_markov_model,
+    andersen_gill_model,
+    frailty_model,
+    cusum_detection,
+    cure_rate_model,
 )
 
 
@@ -222,3 +227,121 @@ def test_full_stats_pipeline():
     orr = compute_odds_ratio(3, 7, 7, 3)
     bh = benjamini_hochberg([po["p_value"], 0.5])
     assert all(v is not None for v in [po, km, orr, bh])
+
+
+# ============================================================
+# Hidden Markov Model (2)
+# ============================================================
+
+def test_hmm_forward_backward():
+    sequences = [["ENROLLMENT_UP", "ENDPOINT_CHANGE", "COMPLETION_EXTENDED"],
+                 ["ENROLLMENT_UP", "COMPLETION_EXTENDED"],
+                 ["ENDPOINT_CHANGE", "ENROLLMENT_UP", "ENDPOINT_CHANGE"]]
+    result = hidden_markov_model(sequences, n_states=2, n_iter=50, seed=42)
+    assert result["transition_matrix"].shape == (2, 2)
+    assert abs(result["transition_matrix"].sum(axis=1) - 1.0).max() < 0.01
+    assert len(result["decoded_sequences"]) == 3
+
+
+def test_hmm_state_decoding():
+    # Repetitive pattern should decode consistently
+    sequences = [["A", "B"] * 5] * 10
+    result = hidden_markov_model(sequences, n_states=2, n_iter=50, seed=42)
+    # Decoded sequence should alternate between states
+    assert len(result["decoded_sequences"][0]) == 10
+
+
+# ============================================================
+# Andersen-Gill (2)
+# ============================================================
+
+def test_andersen_gill_basic():
+    trials_data = [
+        {"trial_id": "T1", "event_times": [30, 90, 180], "features": {"phase": 3, "enrollment": 500}, "max_time": 365},
+        {"trial_id": "T2", "event_times": [60], "features": {"phase": 2, "enrollment": 200}, "max_time": 365},
+        {"trial_id": "T3", "event_times": [], "features": {"phase": 3, "enrollment": 800}, "max_time": 365},
+    ] * 5  # replicate for sample size
+    result = andersen_gill_model(trials_data)
+    assert len(result["hazard_ratios"]) == 2
+    assert result["n_events"] > 0
+
+
+def test_andersen_gill_hr_structure():
+    trials_data = [
+        {"trial_id": f"T{i}", "event_times": [30*j for j in range(1, i%3+2)],
+         "features": {"x1": i % 2, "x2": i * 0.1}, "max_time": 365}
+        for i in range(20)
+    ]
+    result = andersen_gill_model(trials_data)
+    assert all("hr" in hr and "ci_lower" in hr for hr in result["hazard_ratios"])
+
+
+# ============================================================
+# Frailty Model (2)
+# ============================================================
+
+def test_frailty_variance():
+    import numpy as np
+    np.random.seed(42)
+    times = np.random.exponential(10, 30)
+    events = np.ones(30, dtype=int)
+    groups = [f"G{i%3}" for i in range(30)]
+    result = frailty_model(times, events, groups)
+    assert result["frailty_variance"] >= 0
+    assert len(result["frailty_values"]) == 3
+
+
+def test_frailty_group_effects():
+    import numpy as np
+    np.random.seed(42)
+    # Group 0 has faster events (higher hazard)
+    times = np.concatenate([np.random.exponential(2, 15), np.random.exponential(20, 15)])
+    events = np.ones(30, dtype=int)
+    groups = ["fast"] * 15 + ["slow"] * 15
+    result = frailty_model(times, events, groups)
+    assert result["frailty_values"]["fast"] > result["frailty_values"]["slow"]
+
+
+# ============================================================
+# CUSUM Detection (2)
+# ============================================================
+
+def test_cusum_detects_shift():
+    # Clear shift at t=50
+    series = [0.3] * 50 + [0.7] * 50
+    result = cusum_detection(series, threshold=3.0)
+    assert len(result["change_points"]) >= 1
+    # Change point should be near index 50
+    cp_times = [cp["time"] for cp in result["change_points"]]
+    assert any(40 <= t <= 60 for t in cp_times)
+
+
+def test_cusum_no_shift():
+    series = [0.3] * 100
+    result = cusum_detection(series, threshold=5.0)
+    assert len(result["change_points"]) == 0
+
+
+# ============================================================
+# Cure-Rate Model (2)
+# ============================================================
+
+def test_cure_rate_fraction():
+    import numpy as np
+    np.random.seed(42)
+    # 40% never amend (cured), 60% amend at various times
+    n = 50
+    cured = np.random.binomial(1, 0.4, n)
+    times = np.where(cured, 1000, np.random.exponential(10, n))  # cured get large time
+    events = 1 - cured  # cured are censored
+    result = cure_rate_model(times, events, seed=42)
+    assert 0.2 < result["cure_fraction"] < 0.6  # should be near 0.4
+
+
+def test_cure_rate_ci():
+    import numpy as np
+    np.random.seed(42)
+    times = np.random.exponential(10, 40)
+    events = np.random.binomial(1, 0.7, 40)
+    result = cure_rate_model(times, events, seed=42)
+    assert result["cure_ci"][0] < result["cure_fraction"] < result["cure_ci"][1]
