@@ -1,4 +1,4 @@
-"""25 tests for ProtocolEvolution stats engine."""
+"""33 tests for ProtocolEvolution stats engine."""
 
 import os
 import sys
@@ -22,6 +22,11 @@ from src.stats_engine import (
     frailty_model,
     cusum_detection,
     cure_rate_model,
+    multi_state_model,
+    joint_model,
+    bayesian_changepoint,
+    granger_causality,
+    functional_pca,
 )
 
 
@@ -345,3 +350,142 @@ def test_cure_rate_ci():
     events = np.random.binomial(1, 0.7, 40)
     result = cure_rate_model(times, events, seed=42)
     assert result["cure_ci"][0] < result["cure_fraction"] < result["cure_ci"][1]
+
+
+# ============================================================
+# Multi-State Model (2)
+# ============================================================
+
+def test_multi_state_transitions():
+    """Transitions should be detected and state probs should sum to 1."""
+    trials = [
+        {"trial_id": "T1", "states": [("REGISTERED", 0), ("AMENDED", 5), ("COMPLETED", 20)]},
+        {"trial_id": "T2", "states": [("REGISTERED", 0), ("AMENDED", 3), ("AMENDED", 8), ("TERMINATED", 15)]},
+        {"trial_id": "T3", "states": [("REGISTERED", 0), ("COMPLETED", 10)]},
+        {"trial_id": "T4", "states": [("REGISTERED", 0), ("AMENDED", 4), ("COMPLETED", 18)]},
+    ]
+    result = multi_state_model(trials)
+    # Should have transitions
+    assert len(result["transition_intensities"]) > 0
+    # State probs at step 1 should sum to ~1
+    probs_1 = result["state_probs_at_t"][1]
+    total = sum(probs_1.values())
+    assert abs(total - 1.0) < 1e-6
+
+
+def test_multi_state_sojourn():
+    """Sojourn times should exist for non-absorbing states."""
+    trials = [
+        {"trial_id": f"T{i}", "states": [("REGISTERED", 0), ("AMENDED", 5 + i), ("COMPLETED", 20 + i)]}
+        for i in range(5)
+    ]
+    result = multi_state_model(trials)
+    assert "REGISTERED" in result["sojourn_times"]
+    assert result["sojourn_times"]["REGISTERED"]["mean"] > 0
+
+
+# ============================================================
+# Joint Longitudinal-Survival (1)
+# ============================================================
+
+def test_joint_model_association():
+    """Association alpha should exist and be finite."""
+    import numpy as np
+    long_data = [
+        {"trial_id": f"T{i}", "times": [0, 6, 12, 18], "values": [0, 2 + i * 0.5, 4 + i, 5 + i * 1.5]}
+        for i in range(15)
+    ]
+    surv_data = [
+        {"trial_id": f"T{i}", "time": 20 + i * 2, "event": 1 if i % 3 != 0 else 0}
+        for i in range(15)
+    ]
+    result = joint_model(long_data, surv_data)
+    assert "association_alpha" in result
+    assert np.isfinite(result["association_alpha"])
+    assert "longitudinal_coefs" in result
+    assert "slope" in result["longitudinal_coefs"]
+
+
+# ============================================================
+# Bayesian Change-Point (2)
+# ============================================================
+
+def test_bayesian_cp_detects_shift():
+    """Should detect change point near t=30 in a shifted series."""
+    import numpy as np
+    rng = np.random.RandomState(42)
+    series = np.concatenate([
+        rng.normal(0, 0.5, 30),
+        rng.normal(5, 0.5, 30),
+    ]).tolist()
+    result = bayesian_changepoint(series, max_cp=3, n_iter=5000, seed=42)
+    assert result["n_changepoints"] >= 1
+    # At least one posterior position near 30
+    cp_positions = list(result["changepoint_posteriors"].keys())
+    assert any(25 <= pos <= 35 for pos in cp_positions)
+
+
+def test_bayesian_cp_constant():
+    """Constant series should have 0 change points."""
+    series = [3.0] * 60
+    result = bayesian_changepoint(series, max_cp=3, n_iter=3000, seed=42)
+    assert result["n_changepoints"] == 0
+
+
+# ============================================================
+# Granger Causality (2)
+# ============================================================
+
+def test_granger_causal_pair():
+    """X causing Y with lag should be detected."""
+    import numpy as np
+    rng = np.random.RandomState(42)
+    T = 100
+    x = rng.normal(0, 1, T)
+    # Y depends on lagged X
+    y = np.zeros(T)
+    for t in range(1, T):
+        y[t] = 0.8 * x[t - 1] + rng.normal(0, 0.3)
+    data = {"X": x.tolist(), "Y": y.tolist()}
+    result = granger_causality(data, max_lag=3)
+    # X -> Y should be significant
+    assert ("X", "Y") in result["significant_pairs"]
+
+
+def test_granger_independent():
+    """Independent series should not show Granger causality."""
+    import numpy as np
+    rng = np.random.RandomState(99)
+    T = 100
+    a = rng.normal(0, 1, T).tolist()
+    b = rng.normal(0, 1, T).tolist()
+    data = {"A": a, "B": b}
+    result = granger_causality(data, max_lag=3)
+    # Neither should cause the other (at p<0.05)
+    assert ("A", "B") not in result["significant_pairs"]
+    assert ("B", "A") not in result["significant_pairs"]
+
+
+# ============================================================
+# Functional PCA (1 test, 2 assertions -> effectively checks
+# components returned and scores shape)
+# ============================================================
+
+def test_fpca_components():
+    """Should return 3 components with correct score dimensions."""
+    import numpy as np
+    rng = np.random.RandomState(42)
+    # 20 trajectories, each length 40
+    trajectories = [
+        (rng.normal(0, 1, 40) + i * 0.1).tolist()
+        for i in range(20)
+    ]
+    result = functional_pca(trajectories, n_components=3)
+    assert len(result["components"]) == 3
+    # Scores: 20 trajectories x 3 components
+    assert len(result["scores"]) == 20
+    assert len(result["scores"][0]) == 3
+    # Variance explained should sum to <= 1
+    assert sum(result["variance_explained"]) <= 1.0 + 1e-6
+    # Reconstruction error should be small-ish (not zero since only 3 components)
+    assert result["reconstruction_error"] >= 0

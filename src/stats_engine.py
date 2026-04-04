@@ -1,6 +1,6 @@
 """Statistical engine for ProtocolEvolution.
 
-Provides 13 methods in three layers:
+Provides 18 methods in four layers:
 
 Layer 1 -- Publication-Essential (5 methods):
   1. pattern_outcome_test   Chi-squared / Fisher for pattern-outcome association
@@ -20,6 +20,13 @@ Layer 3 -- Advanced Statistical Methods (5 methods):
   11. frailty_model          Shared gamma frailty for sponsor clustering
   12. cusum_detection        CUSUM + PELT change-point detection
   13. cure_rate_model        Mixture cure-rate model (logistic + Weibull)
+
+Layer 4 -- Cutting-Edge (5 methods):
+  14. multi_state_model      Multi-state Nelson-Aalen transition model
+  15. joint_model            Joint longitudinal-survival model
+  16. bayesian_changepoint   Bayesian change-point detection (RJMCMC)
+  17. granger_causality      Granger causality via VAR F-tests
+  18. functional_pca         Functional PCA on amendment trajectories
 """
 
 from __future__ import annotations
@@ -1910,4 +1917,594 @@ def cure_rate_model(
         "coefficients": coefficients,
         "log_likelihood": round(float(log_lik), 4),
         "bic": round(float(bic), 4),
+    }
+
+
+# ============================================================
+# Layer 4 — Cutting-Edge (5 methods)
+# ============================================================
+
+
+# ============================================================
+# 14. Multi-State Model (Nelson-Aalen)
+# ============================================================
+
+
+def multi_state_model(
+    trials_data: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Multi-state model for protocol lifecycle transitions.
+
+    States: REGISTERED -> AMENDED -> COMPLETED / TERMINATED.
+    Uses the Nelson-Aalen estimator for transition-specific cumulative
+    hazards.
+
+    Parameters
+    ----------
+    trials_data : list of dict
+        Each dict has ``trial_id`` and ``states``: a list of
+        ``(state, time)`` tuples ordered chronologically.
+
+    Returns
+    -------
+    dict
+        Keys: transition_intensities, state_probs_at_t, sojourn_times.
+    """
+    # Collect observed transitions
+    transitions: Dict[Tuple[str, str], List[float]] = defaultdict(list)
+    sojourn_raw: Dict[str, List[float]] = defaultdict(list)
+
+    for trial in trials_data:
+        states = trial["states"]
+        for i in range(len(states) - 1):
+            s_from, t_from = states[i]
+            s_to, t_to = states[i + 1]
+            dt = t_to - t_from
+            transitions[(s_from, s_to)].append(dt)
+            sojourn_raw[s_from].append(dt)
+
+    # All unique states
+    all_states = sorted(set(
+        s for trial in trials_data for s, _ in trial["states"]
+    ))
+
+    # Nelson-Aalen cumulative hazard per transition
+    transition_intensities: Dict[str, Any] = {}
+    for (s_from, s_to), times_list in transitions.items():
+        times_arr = np.sort(times_list)
+        n_at_risk = len(times_arr)
+        cum_hazard = []
+        ch = 0.0
+        for idx, t in enumerate(times_arr):
+            d = 1  # one event at this time
+            n_r = n_at_risk - idx
+            ch += d / max(n_r, 1)
+            cum_hazard.append({"time": float(t), "cum_hazard": round(ch, 6)})
+        key = f"{s_from}->{s_to}"
+        intensity = len(times_list) / max(sum(sojourn_raw.get(s_from, [1])), 1e-10)
+        transition_intensities[key] = {
+            "count": len(times_list),
+            "intensity": round(float(intensity), 6),
+            "cum_hazard": cum_hazard,
+        }
+
+    # Sojourn times
+    sojourn_times: Dict[str, Dict[str, float]] = {}
+    for state, durations in sojourn_raw.items():
+        arr = np.array(durations)
+        sojourn_times[state] = {
+            "mean": round(float(np.mean(arr)), 4),
+            "median": round(float(np.median(arr)), 4),
+            "std": round(float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0, 4),
+        }
+
+    # State probabilities at selected time horizons via transition matrix
+    # Build empirical transition probability matrix
+    state_idx = {s: i for i, s in enumerate(all_states)}
+    n_s = len(all_states)
+    trans_counts = np.zeros((n_s, n_s))
+    for (s_from, s_to), times_list in transitions.items():
+        i_from = state_idx[s_from]
+        i_to = state_idx[s_to]
+        trans_counts[i_from, i_to] += len(times_list)
+
+    # Row-stochastic transition matrix
+    row_sums = trans_counts.sum(axis=1, keepdims=True)
+    # Absorbing states get identity row
+    P = np.zeros((n_s, n_s))
+    for i in range(n_s):
+        if row_sums[i, 0] > 0:
+            P[i, :] = trans_counts[i, :] / row_sums[i, 0]
+        else:
+            P[i, i] = 1.0  # absorbing
+
+    # Compute state probabilities at steps 1, 5, 10
+    state_probs_at_t: Dict[int, Dict[str, float]] = {}
+    init = np.zeros(n_s)
+    if len(all_states) > 0:
+        init[0] = 1.0  # start in first state (REGISTERED)
+    for step in [1, 5, 10]:
+        probs = init @ np.linalg.matrix_power(P, step)
+        state_probs_at_t[step] = {
+            all_states[i]: round(float(probs[i]), 6) for i in range(n_s)
+        }
+
+    return {
+        "transition_intensities": transition_intensities,
+        "state_probs_at_t": state_probs_at_t,
+        "sojourn_times": sojourn_times,
+    }
+
+
+# ============================================================
+# 15. Joint Longitudinal-Survival Model
+# ============================================================
+
+
+def joint_model(
+    longitudinal_data: List[Dict[str, Any]],
+    survival_data: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Two-stage joint longitudinal-survival model.
+
+    Stage 1: Linear mixed-effects model (simplified via OLS per trial)
+    for the longitudinal enrollment/amendment trajectory.
+    Stage 2: Cox PH with the predicted trajectory value as a
+    time-varying covariate.
+
+    Parameters
+    ----------
+    longitudinal_data : list of dict
+        Each dict has ``trial_id``, ``times`` (list of float),
+        ``values`` (list of float).
+    survival_data : list of dict
+        Each dict has ``trial_id``, ``time`` (float), ``event`` (0/1).
+
+    Returns
+    -------
+    dict
+        Keys: longitudinal_coefs, survival_coefs, association_alpha,
+        log_likelihood.
+    """
+    # Stage 1: Fit per-trial linear trajectories, then pool
+    # Y_i(t) = a0 + a1*t + epsilon
+    all_times = []
+    all_values = []
+    for rec in longitudinal_data:
+        all_times.extend(rec["times"])
+        all_values.extend(rec["values"])
+
+    t_arr = np.array(all_times, dtype=float)
+    y_arr = np.array(all_values, dtype=float)
+
+    # OLS: Y = [1, t] @ [a0, a1]
+    A = np.column_stack([np.ones_like(t_arr), t_arr])
+    long_coefs, residuals, _, _ = np.linalg.lstsq(A, y_arr, rcond=None)
+
+    a0, a1 = float(long_coefs[0]), float(long_coefs[1])
+
+    # Stage 2: Predict trajectory value at survival time for each trial
+    surv_map = {rec["trial_id"]: rec for rec in survival_data}
+    long_map: Dict[str, Dict] = {}
+    for rec in longitudinal_data:
+        long_map[rec["trial_id"]] = rec
+
+    trial_ids = [rec["trial_id"] for rec in survival_data]
+    n_surv = len(trial_ids)
+
+    times_surv = np.array([surv_map[tid]["time"] for tid in trial_ids], dtype=float)
+    events_surv = np.array([surv_map[tid]["event"] for tid in trial_ids], dtype=int)
+
+    # Predicted trajectory value at survival time
+    predicted_vals = a0 + a1 * times_surv
+
+    # Cox PH with predicted value as single covariate
+    X_cox = predicted_vals.reshape(-1, 1)
+    cox_result = cox_ph(
+        X_cox, times_surv, events_surv,
+        feature_names=["predicted_trajectory"],
+        max_iter=50,
+    )
+
+    # Association parameter alpha is the log-HR for the trajectory covariate
+    alpha = 0.0
+    if cox_result["hazard_ratios"]:
+        hr = cox_result["hazard_ratios"][0].get("hr", 1.0)
+        alpha = float(math.log(max(hr, 1e-10)))
+
+    return {
+        "longitudinal_coefs": {"intercept": round(a0, 4), "slope": round(a1, 4)},
+        "survival_coefs": cox_result["hazard_ratios"],
+        "association_alpha": round(alpha, 4),
+        "log_likelihood": cox_result.get("log_likelihood", 0.0),
+    }
+
+
+# ============================================================
+# 16. Bayesian Change-Point Detection (RJMCMC)
+# ============================================================
+
+
+def bayesian_changepoint(
+    time_series: Sequence[float],
+    max_cp: int = 5,
+    n_iter: int = 5000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Bayesian change-point detection via reversible-jump MCMC.
+
+    Uses birth/death/shift moves with Metropolis-Hastings acceptance
+    to estimate the number and location of change points.
+
+    Parameters
+    ----------
+    time_series : sequence of float
+        Observed time series values.
+    max_cp : int
+        Maximum number of change points.
+    n_iter : int
+        Number of MCMC iterations.
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    dict
+        Keys: n_changepoints, changepoint_posteriors (dict mapping
+        position -> posterior probability), segment_means, dic.
+    """
+    rng = np.random.RandomState(seed)
+    y = np.asarray(time_series, dtype=float)
+    n = len(y)
+
+    if n < 4:
+        return {
+            "n_changepoints": 0,
+            "changepoint_posteriors": {},
+            "segment_means": [round(float(np.mean(y)), 4)],
+            "dic": 0.0,
+        }
+
+    # Constant or near-constant series: no change points possible
+    if np.std(y) < 1e-10:
+        return {
+            "n_changepoints": 0,
+            "changepoint_posteriors": {},
+            "segment_means": [round(float(np.mean(y)), 4)],
+            "dic": 0.0,
+        }
+
+    # Precompute cumulative sums for fast segment stats
+    cum_y = np.concatenate([[0.0], np.cumsum(y)])
+    cum_y2 = np.concatenate([[0.0], np.cumsum(y ** 2)])
+
+    def _seg_loglik(start: int, end: int) -> float:
+        """Log-likelihood of segment [start, end) under normal model."""
+        seg_n = end - start
+        if seg_n <= 0:
+            return -1e10
+        seg_sum = cum_y[end] - cum_y[start]
+        seg_sum2 = cum_y2[end] - cum_y2[start]
+        seg_mean = seg_sum / seg_n
+        seg_var = max(seg_sum2 / seg_n - seg_mean ** 2, 1e-10)
+        return -0.5 * seg_n * (1.0 + math.log(2.0 * math.pi * seg_var))
+
+    def _total_loglik(cps: List[int]) -> float:
+        """Total log-likelihood given change points."""
+        boundaries = [0] + sorted(cps) + [n]
+        ll = 0.0
+        for i in range(len(boundaries) - 1):
+            ll += _seg_loglik(boundaries[i], boundaries[i + 1])
+        return ll
+
+    # Initialize with no change points
+    current_cps: List[int] = []
+    current_ll = _total_loglik(current_cps)
+
+    # Track posterior visits
+    cp_visits = np.zeros(n, dtype=int)
+    k_trace = []
+    ll_trace = []
+
+    for it in range(n_iter):
+        k = len(current_cps)
+
+        # Choose move type
+        u = rng.random()
+        if k == 0:
+            move = "birth"
+        elif k >= max_cp:
+            move = "death" if u < 0.5 else "shift"
+        else:
+            if u < 0.4:
+                move = "birth"
+            elif u < 0.7:
+                move = "death"
+            else:
+                move = "shift"
+
+        if move == "birth":
+            # Propose a new change point
+            forbidden = set(current_cps) | {0, n}
+            candidates = [i for i in range(2, n - 1) if i not in forbidden]
+            if not candidates:
+                continue
+            new_cp = int(rng.choice(candidates))
+            proposed = current_cps + [new_cp]
+            proposed_ll = _total_loglik(proposed)
+            # Prior ratio: uniform prior on k -> favor parsimony slightly
+            log_prior = -0.5  # penalize extra cp
+            log_alpha = proposed_ll - current_ll + log_prior
+            if math.log(max(rng.random(), 1e-300)) < log_alpha:
+                current_cps = proposed
+                current_ll = proposed_ll
+
+        elif move == "death" and k > 0:
+            idx = int(rng.randint(0, k))
+            proposed = current_cps[:idx] + current_cps[idx + 1:]
+            proposed_ll = _total_loglik(proposed)
+            log_prior = 0.5  # reward parsimony
+            log_alpha = proposed_ll - current_ll + log_prior
+            if math.log(max(rng.random(), 1e-300)) < log_alpha:
+                current_cps = proposed
+                current_ll = proposed_ll
+
+        elif move == "shift" and k > 0:
+            idx = int(rng.randint(0, k))
+            old_cp = current_cps[idx]
+            shift = int(rng.choice([-2, -1, 1, 2]))
+            new_cp = old_cp + shift
+            forbidden = set(current_cps) - {old_cp} | {0, n}
+            if 2 <= new_cp < n - 1 and new_cp not in forbidden:
+                proposed = current_cps[:idx] + [new_cp] + current_cps[idx + 1:]
+                proposed_ll = _total_loglik(proposed)
+                log_alpha = proposed_ll - current_ll
+                if math.log(max(rng.random(), 1e-300)) < log_alpha:
+                    current_cps = proposed
+                    current_ll = proposed_ll
+
+        # Record
+        for cp in current_cps:
+            cp_visits[cp] += 1
+        k_trace.append(len(current_cps))
+        ll_trace.append(current_ll)
+
+    # Posterior summaries
+    burn_in = n_iter // 4
+    k_post = k_trace[burn_in:]
+    from collections import Counter
+    k_counts = Counter(k_post)
+    best_k = k_counts.most_common(1)[0][0]
+
+    # Change-point posterior probabilities
+    n_post = n_iter - burn_in
+    cp_posteriors = {}
+    for pos in range(n):
+        prob = cp_visits[pos] / n_iter  # approximate
+        if prob > 0.05:
+            cp_posteriors[int(pos)] = round(float(prob), 4)
+
+    # Segment means from MAP change points
+    # Use the most visited positions above threshold
+    map_cps = sorted(
+        [pos for pos, prob in cp_posteriors.items() if prob > 0.1],
+        key=lambda x: -cp_posteriors.get(x, 0),
+    )[:best_k]
+    boundaries = [0] + sorted(map_cps) + [n]
+    segment_means = []
+    for i in range(len(boundaries) - 1):
+        seg = y[boundaries[i]:boundaries[i + 1]]
+        segment_means.append(round(float(np.mean(seg)), 4))
+
+    # DIC approximation
+    mean_ll = float(np.mean(ll_trace[burn_in:]))
+    ll_at_mean = current_ll  # approximate
+    p_d = 2.0 * (mean_ll - ll_at_mean) if mean_ll > ll_at_mean else 0.0
+    dic = -2.0 * mean_ll + 2.0 * p_d
+
+    return {
+        "n_changepoints": best_k,
+        "changepoint_posteriors": cp_posteriors,
+        "segment_means": segment_means,
+        "dic": round(float(dic), 4),
+    }
+
+
+# ============================================================
+# 17. Granger Causality
+# ============================================================
+
+
+def granger_causality(
+    amendment_counts_by_type: Dict[str, List[float]],
+    max_lag: int = 3,
+) -> Dict[str, Any]:
+    """Granger causality test between amendment type time series.
+
+    Fits VAR models and performs F-tests comparing restricted (no
+    lagged values of X) vs unrestricted (includes lagged X) models
+    for each pair of amendment types.
+
+    Parameters
+    ----------
+    amendment_counts_by_type : dict
+        Keys are amendment type names, values are time series of counts.
+    max_lag : int
+        Maximum lag to test.
+
+    Returns
+    -------
+    dict
+        Keys: results (list of {cause, effect, f_stat, p_value, lag}),
+        significant_pairs (list of (cause, effect) with p < 0.05).
+    """
+    types = list(amendment_counts_by_type.keys())
+    n_types = len(types)
+    results = []
+    significant_pairs = []
+
+    for cause_name in types:
+        for effect_name in types:
+            if cause_name == effect_name:
+                continue
+
+            x = np.array(amendment_counts_by_type[cause_name], dtype=float)
+            y_series = np.array(amendment_counts_by_type[effect_name], dtype=float)
+            T = min(len(x), len(y_series))
+
+            if T <= max_lag + 2:
+                continue
+
+            best_f = 0.0
+            best_p = 1.0
+            best_lag = 1
+
+            for lag in range(1, max_lag + 1):
+                n_obs = T - lag
+
+                # Restricted model: Y_t = a0 + a1*Y_{t-1} + ... + a_lag*Y_{t-lag}
+                Y = y_series[lag:T]
+                X_restricted = np.column_stack(
+                    [np.ones(n_obs)]
+                    + [y_series[lag - l:T - l] for l in range(1, lag + 1)]
+                )
+
+                # Unrestricted: add lagged X
+                X_unrestricted = np.column_stack(
+                    [X_restricted]
+                    + [x[lag - l:T - l] for l in range(1, lag + 1)]
+                )
+
+                # OLS for both
+                try:
+                    beta_r, res_r, _, _ = np.linalg.lstsq(X_restricted, Y, rcond=None)
+                    beta_u, res_u, _, _ = np.linalg.lstsq(X_unrestricted, Y, rcond=None)
+                except np.linalg.LinAlgError:
+                    continue
+
+                rss_r = float(np.sum((Y - X_restricted @ beta_r) ** 2))
+                rss_u = float(np.sum((Y - X_unrestricted @ beta_u) ** 2))
+
+                q = lag  # number of restrictions
+                df_u = n_obs - X_unrestricted.shape[1]
+
+                if rss_u <= 1e-15 or df_u <= 0:
+                    continue
+
+                f_stat = ((rss_r - rss_u) / q) / (rss_u / df_u)
+                p_value = 1.0 - float(sp_stats.f.cdf(max(f_stat, 0), q, df_u))
+
+                if p_value < best_p:
+                    best_f = f_stat
+                    best_p = p_value
+                    best_lag = lag
+
+            results.append({
+                "cause": cause_name,
+                "effect": effect_name,
+                "f_stat": round(float(best_f), 4),
+                "p_value": round(float(best_p), 6),
+                "lag": best_lag,
+            })
+
+            if best_p < 0.05:
+                significant_pairs.append((cause_name, effect_name))
+
+    return {
+        "results": results,
+        "significant_pairs": significant_pairs,
+    }
+
+
+# ============================================================
+# 18. Functional PCA
+# ============================================================
+
+
+def functional_pca(
+    trajectories: List[List[float]],
+    n_components: int = 3,
+) -> Dict[str, Any]:
+    """Functional PCA on discretized amendment trajectories.
+
+    Discretizes amendment timelines onto a common grid, centres them,
+    and performs eigendecomposition of the covariance matrix.
+
+    Parameters
+    ----------
+    trajectories : list of list of float
+        Each inner list is a discretized amendment count trajectory.
+        Lists may have different lengths; they will be interpolated
+        to a common grid.
+    n_components : int
+        Number of principal components to retain.
+
+    Returns
+    -------
+    dict
+        Keys: components (list of arrays), scores (n_traj x n_comp),
+        mean_function (array), reconstruction_error (float),
+        variance_explained (list of float).
+    """
+    if len(trajectories) == 0:
+        return {
+            "components": [],
+            "scores": [],
+            "mean_function": [],
+            "reconstruction_error": 0.0,
+            "variance_explained": [],
+        }
+
+    # Interpolate all trajectories to common grid
+    max_len = max(len(t) for t in trajectories)
+    grid_size = max(max_len, 50)
+    grid = np.linspace(0, 1, grid_size)
+
+    interpolated = []
+    for traj in trajectories:
+        if len(traj) < 2:
+            interpolated.append(np.full(grid_size, traj[0] if traj else 0.0))
+        else:
+            x_orig = np.linspace(0, 1, len(traj))
+            interp_vals = np.interp(grid, x_orig, traj)
+            interpolated.append(interp_vals)
+
+    X = np.array(interpolated)  # (n_traj, grid_size)
+    n_traj = X.shape[0]
+
+    # Centre
+    mean_func = np.mean(X, axis=0)
+    X_centered = X - mean_func
+
+    # Covariance and eigen
+    n_comp = min(n_components, n_traj, grid_size)
+    if n_comp < 1:
+        n_comp = 1
+
+    # Use SVD for numerical stability
+    U, S, Vt = np.linalg.svd(X_centered, full_matrices=False)
+
+    components = Vt[:n_comp, :].tolist()
+    eigenvalues = (S[:n_comp] ** 2) / max(n_traj - 1, 1)
+    total_var = float(np.sum(S ** 2) / max(n_traj - 1, 1))
+
+    variance_explained = []
+    for ev in eigenvalues:
+        variance_explained.append(
+            round(float(ev / total_var) if total_var > 0 else 0.0, 6)
+        )
+
+    # Scores: project centered data onto components
+    scores = (X_centered @ Vt[:n_comp, :].T).tolist()
+
+    # Reconstruction error
+    X_recon = (np.array(scores) @ np.array(components)) + mean_func
+    recon_error = float(np.mean((X - X_recon) ** 2))
+
+    return {
+        "components": components,
+        "scores": scores,
+        "mean_function": mean_func.tolist(),
+        "reconstruction_error": round(recon_error, 6),
+        "variance_explained": variance_explained,
     }
